@@ -75,9 +75,51 @@ DEFINES = +define+UVM_REPORT_DISABLE_FILE_LINE \
           +define+UVM_NO_DPI \
           +define+SVA_ON
 
+# --- iSim (True North Silicon) ---------------------------------------------
+# iSim is a SystemVerilog + VHDL simulator that SHIPS a pre-compiled UVM:
+# `-uvm [version]` maps the library out of the install's own
+# lib/isim/uvm/<version>/ into the work library and resolves uvm_macros.svh
+# from the shipped flattened header.  So the iSim targets below drop EXACTLY
+# TWO things from what the Verilator line compiles, and they are the same one
+# thing: $(UVM_PKG) and +incdir+"$(UVM_HOME)".  No UVM source reaches an iSim
+# command line and UVM_HOME is never read.
+#
+# EVERYTHING ELSE IS READ FROM THE VARIABLES ABOVE, NOT RETYPED -- the same
+# $(SV_SOURCES), the same $(INCDIRS) minus the UVM entry, the same $(DEFINES)
+# including +define+UVM_NO_DPI.  That define is a Verilator capability
+# workaround and is inert under iSim (it appears nowhere in the macro headers
+# that expand inside this compilation unit), but it is upstream's define and
+# these targets do not get to decide which of upstream's defines they like.
+# If a source, an include path or a define is added above, these targets pick
+# it up unchanged.
+ISIM_VLOG ?= isim-vlog
+ISIM_ELAB ?= isim-elab
+ISIM      ?= isim
+# TOP_MODULE above is `uvm_pkg`, which names the C++ class Verilator emits for
+# its --main wrapper -- it is NOT the HDL top.  The elaboration top is `top`,
+# in tb/top.sv.
+ISIM_TOP  ?= top
+ISIM_WORK ?= isim_work
+ISIM_LOG   = $(LOG_DIR)/isim_compile.log
+
+# $(INCDIRS) minus the UVM one.  filter-out matches on the EXPANDED token, so
+# this keeps working if UVM_HOME is redefined or injected from the container.
+ISIM_INCDIRS = $(filter-out +incdir+"$(UVM_HOME)",$(INCDIRS))
+
+# The timescale is SCRAPED from VERILATOR_FLAGS rather than repeated, because
+# a timescale changes what `#5` means and a second copy would drift.
+ISIM_TIMESCALE := $(shell printf '%s\n' $(VERILATOR_FLAGS) | grep -A1 -x -e '--timescale' | tail -n1)
+ifneq ($(filter isim isim_compile isim_run_one isim_run_all isim_one isim_all,$(MAKECMDGOALS)),)
+ifeq ($(strip $(ISIM_TIMESCALE)),)
+$(error VERILATOR_FLAGS no longer carries --timescale -- every timestamp a run \
+        produces depends on it, so the iSim targets refuse to guess one)
+endif
+endif
+
 # --- Targets ---
 
 .PHONY: all clean run report epilog
+.PHONY: isim isim_compile isim_run_one isim_run_all isim_one isim_all isim_clean isim_epilog
 
 targets:
 	@echo "Available targets..."
@@ -88,6 +130,12 @@ targets:
 	@echo "  clean: delete all generated files."
 	@echo "  one: clean, run_one, cov_report and epilog (in that order)."
 	@echo "  all: clean, run_all, cov_report and epilog (in that order)."
+	@echo "  --- iSim (True North Silicon) ---"
+	@echo "  isim_compile: analyse + elaborate with iSim's shipped UVM (-uvm)."
+	@echo "  isim_run_one: run UVM test $(UVM_TESTNAME) under iSim."
+	@echo "  isim_run_all: run every test in ALL_TESTNAMES under iSim."
+	@echo "  isim_one / isim_all: isim_clean, compile, run_one/run_all, epilog."
+	@echo "  isim_clean: delete iSim generated files."
 
 one: clean $(OBJ_DIR)/V$(TOP_MODULE) run_one cov_report epilog
 all: clean $(OBJ_DIR)/V$(TOP_MODULE) run_all cov_report epilog
@@ -148,3 +196,68 @@ clean:
 	@echo "Delete _all_ generated files..."
 	@echo $(BANNER)
 	rm -rf $(OBJ_DIR) $(LOG_DIR)
+
+# --- iSim targets ----------------------------------------------------------
+# Mirrors the Verilator ladder above: compile+elaborate, run one, run all.
+#
+# WHAT THESE DO TODAY, MEASURED 2026-09-02: `isim_compile` ANALYSES the whole
+# environment clean and then isim-elab refuses ONE call -- tb/test_lib.sv:33's
+# `printer = new("my_printer")`.  uvm_table_printer gained a name argument in
+# 1800.2-2017; in UVM 1.2, the version iSim ships, its constructor takes none.
+# That is a LIBRARY VERSION difference, not a simulator defect, and the oracle
+# agrees: dsim renders the identical refusal from its own UVM 1.2 tree and
+# runs this bench clean from its 1800.2 tree.  The rung is tracked upstream of
+# here as True North Silicon github#1592 (ship an 1800.2 library); until then
+# `isim_compile` is EXPECTED to stop at that call, loudly and by name.  It is
+# committed anyway because a build surface that names the flow is how the day
+# it starts passing gets noticed.
+
+isim_compile: $(SV_SOURCES)
+	@echo $(BANNER)
+	@echo "Compiling with iSim (shipped UVM, -uvm)..."
+	@echo $(BANNER)
+	@mkdir -p $(LOG_DIR)
+	$(ISIM_VLOG) -work $(ISIM_WORK) -uvm -timescale $(ISIM_TIMESCALE) \
+		$(ISIM_INCDIRS) $(DEFINES) $(SV_SOURCES) 2>&1 | tee $(ISIM_LOG)
+	$(ISIM_ELAB) -work $(ISIM_WORK) -uvm -timescale $(ISIM_TIMESCALE) \
+		-sir -top $(ISIM_TOP) 2>&1 | tee -a $(ISIM_LOG)
+
+# `isim` is the short spelling of the compile+elaborate rung.
+isim: isim_compile
+
+# Run one testcase (as determined by $UVM_TESTNAME)
+isim_run_one: isim_compile
+	@echo $(BANNER)
+	@echo "Running $(UVM_TESTNAME) under iSim..."
+	@echo $(BANNER)
+	$(ISIM) -work $(ISIM_WORK) -image $(ISIM_WORK)/a.out.so \
+		+UVM_TESTNAME="$(UVM_TESTNAME)" \
+		2>&1 | tee $(LOG_DIR)/isim_$(UVM_TESTNAME).log
+
+# Run all testcases
+isim_run_all: isim_compile
+	@echo $(BANNER)
+	@echo "Running _all_ testcases under iSim..."
+	@echo $(BANNER)
+	@set -e; for testname in $(ALL_TESTNAMES); do \
+		echo "Running $$testname..."; \
+		$(ISIM) -work $(ISIM_WORK) -image $(ISIM_WORK)/a.out.so \
+			+UVM_TESTNAME="$$testname" \
+			2>&1 | tee $(LOG_DIR)/isim_$$testname.log; \
+	done
+
+isim_one: isim_clean isim_compile isim_run_one isim_epilog
+isim_all: isim_clean isim_compile isim_run_all isim_epilog
+
+isim_epilog:
+	@echo $(BANNER)
+	@echo "iSim compile log in $(ISIM_LOG)"
+	@echo "iSim simulation logfiles in $(LOG_DIR)/isim_<UVM_TESTNAME>.log"
+	@echo "iSim work library in $(ISIM_WORK)"
+	@echo $(BANNER)
+
+isim_clean:
+	@echo $(BANNER)
+	@echo "Delete iSim generated files..."
+	@echo $(BANNER)
+	rm -rf $(ISIM_WORK) $(LOG_DIR)/isim_*.log $(ISIM_LOG)
