@@ -30,7 +30,11 @@ class base_test extends uvm_test;
    function void build_phase(uvm_phase phase);
       super.build_phase(phase);
       env = dut_env::type_id::create("env", this);
-      printer = new("my_printer");
+      // UVM 1.2 declares `uvm_table_printer::new()` with NO arguments;
+      // 1800.2-2017 added an optional `string name=""`. Calling it with
+      // no argument is the COMMON SUBSET -- valid under both, so this
+      // stays correct for the Verilator/1800.2 flow this repo targets.
+      printer = new();
       // NOTE: requires +define+UVM_ENABLE_DEPRECATED_API, otherwise knobs is a local member of the printer.
       //printer.knobs.depth = 5;
    endfunction:build_phase
