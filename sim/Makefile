@@ -109,7 +109,7 @@ ISIM_INCDIRS = $(filter-out +incdir+"$(UVM_HOME)",$(INCDIRS))
 # The timescale is SCRAPED from VERILATOR_FLAGS rather than repeated, because
 # a timescale changes what `#5` means and a second copy would drift.
 ISIM_TIMESCALE := $(shell printf '%s\n' $(VERILATOR_FLAGS) | grep -A1 -x -e '--timescale' | tail -n1)
-ifneq ($(filter isim isim_compile isim_run_one isim_run_all isim_one isim_all,$(MAKECMDGOALS)),)
+ifneq ($(filter isim isim_analyse isim_compile isim_run_one isim_run_all isim_one isim_all,$(MAKECMDGOALS)),)
 ifeq ($(strip $(ISIM_TIMESCALE)),)
 $(error VERILATOR_FLAGS no longer carries --timescale -- every timestamp a run \
         produces depends on it, so the iSim targets refuse to guess one)
@@ -119,7 +119,7 @@ endif
 # --- Targets ---
 
 .PHONY: all clean run report epilog
-.PHONY: isim isim_compile isim_run_one isim_run_all isim_one isim_all isim_clean isim_epilog
+.PHONY: isim isim_analyse isim_compile isim_run_one isim_run_all isim_one isim_all isim_clean isim_epilog
 
 targets:
 	@echo "Available targets..."
@@ -131,6 +131,7 @@ targets:
 	@echo "  one: clean, run_one, cov_report and epilog (in that order)."
 	@echo "  all: clean, run_all, cov_report and epilog (in that order)."
 	@echo "  --- iSim (True North Silicon) ---"
+	@echo "  isim_analyse: analyse with iSim's shipped UVM (-uvm)."
 	@echo "  isim_compile: analyse + elaborate with iSim's shipped UVM (-uvm)."
 	@echo "  isim_run_one: run UVM test $(UVM_TESTNAME) under iSim."
 	@echo "  isim_run_all: run every test in ALL_TESTNAMES under iSim."
@@ -212,13 +213,21 @@ clean:
 # committed anyway because a build surface that names the flow is how the day
 # it starts passing gets noticed.
 
-isim_compile: $(SV_SOURCES)
+# `isim_analyse` is the analysis half on its own (the compilation rung of a
+# ladder that grades analyse / elaborate / run separately); `isim_compile`
+# is analyse + elaborate, as before.
+isim_analyse: $(SV_SOURCES)
 	@echo $(BANNER)
-	@echo "Compiling with iSim (shipped UVM, -uvm)..."
+	@echo "Analysing with iSim (shipped UVM, -uvm)..."
 	@echo $(BANNER)
 	@mkdir -p $(LOG_DIR)
 	$(ISIM_VLOG) -work $(ISIM_WORK) -uvm -timescale $(ISIM_TIMESCALE) \
 		$(ISIM_INCDIRS) $(DEFINES) $(SV_SOURCES) 2>&1 | tee $(ISIM_LOG)
+
+isim_compile: isim_analyse
+	@echo $(BANNER)
+	@echo "Elaborating with iSim..."
+	@echo $(BANNER)
 	$(ISIM_ELAB) -work $(ISIM_WORK) -uvm -timescale $(ISIM_TIMESCALE) \
 		-sir -top $(ISIM_TOP) 2>&1 | tee -a $(ISIM_LOG)
 
