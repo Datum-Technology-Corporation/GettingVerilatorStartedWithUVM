@@ -206,7 +206,7 @@ clean:
 # `printer = new("my_printer")`.  uvm_table_printer gained a name argument in
 # 1800.2-2017; in UVM 1.2, the version iSim ships, its constructor takes none.
 # That is a LIBRARY VERSION difference, not a simulator defect, and the oracle
-# agrees: dsim renders the identical refusal from its own UVM 1.2 tree and
+# agrees: it renders the identical refusal from its own UVM 1.2 tree and
 # runs this bench clean from its 1800.2 tree.  The rung is tracked upstream of
 # here as True North Silicon github#1592 (ship an 1800.2 library); until then
 # `isim_compile` is EXPECTED to stop at that call, loudly and by name.  It is
