@@ -229,7 +229,7 @@ isim_compile: isim_analyse
 	@echo "Elaborating with iSim..."
 	@echo $(BANNER)
 	$(ISIM_ELAB) -work $(ISIM_WORK) -uvm -timescale $(ISIM_TIMESCALE) \
-		-sir -top $(ISIM_TOP) 2>&1 | tee -a $(ISIM_LOG)
+		-top $(ISIM_TOP) 2>&1 | tee -a $(ISIM_LOG)
 
 # `isim` is the short spelling of the compile+elaborate rung.
 isim: isim_compile
